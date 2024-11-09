@@ -1,6 +1,8 @@
 import os
-
 from dotenv import load_dotenv
+import urllib.request
+import json
+from pprint import pprint
 
 # Load environment variables
 load_dotenv()
@@ -21,7 +23,14 @@ def get_json(url: str) -> dict:
 
     Both get_lat_lng() and get_nearest_station() might need to use this function.
     """
-    pass
+    try:
+        with urllib.request.urlopen(url) as f:
+            response_text = f.read().decode('utf-8')
+            response_data = json.loads(response_text)
+            return response_data
+    except Exception as e:
+        print(f'Error fetching date:{e}')
+        return {}
 
 
 def get_lat_lng(place_name: str) -> tuple[str, str]:
@@ -30,7 +39,9 @@ def get_lat_lng(place_name: str) -> tuple[str, str]:
 
     See https://docs.mapbox.com/api/search/geocoding/ for Mapbox Geocoding API URL formatting requirements.
     """
-    pass
+    try:
+        encoded_place = place_name.replace('', '%20')
+        url = f"{MAPBOX_BASE_URL}/{encoded_place}".json?access_token={M}
 
 
 def get_nearest_station(latitude: str, longitude: str) -> tuple[str, bool]:
