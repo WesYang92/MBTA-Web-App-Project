@@ -2,8 +2,8 @@ import os
 from dotenv import load_dotenv
 import urllib.request
 import json
-from pprint import pprint
 from datetime import datetime
+import urllib.parse
 
 # Load environment variables
 load_dotenv()
@@ -18,7 +18,6 @@ MAPBOX_BASE_URL = "https://api.mapbox.com/geocoding/v5/mapbox.places"
 MBTA_BASE_URL = "https://api-v3.mbta.com/stops"
 WEATHER_BASE_URL = "http://api.openweathermap.org/data/2.5/weather"
 
-
 def get_json(url: str) -> dict:
     """
     Given a properly formatted URL for a JSON web API request, return a Python JSON object containing the response to that request.
@@ -26,37 +25,57 @@ def get_json(url: str) -> dict:
     Both get_lat_lng() and get_nearest_station() might need to use this function.
     """
     try:
-        with urllib.request.urlopen(url) as f:
+        # Create a Request object with proper headers
+        headers = {
+            'User-Agent': 'Mozilla/5.0',
+            'Accept': 'application/json'
+        }
+        request = urllib.request.Request(url, headers=headers)
+        
+        with urllib.request.urlopen(request) as f:
             response_text = f.read().decode('utf-8')
-            response_data = json.loads(response_text)
-            return response_data
-    except Exception as e:
-        print(f'Error fetching date:{e}')
+            return json.loads(response_text)
+    except urllib.error.HTTPError as e:
+        print(f'HTTP Error: {e.code} - {e.reason}')
         return {}
-
+    except urllib.error.URLError as e:
+        print(f'URL Error: {e.reason}')
+        return {}
+    except Exception as e:
+        print(f'Error fetching data: {e}')
+        return {}
 
 def get_lat_lng(place_name: str) -> tuple[str, str, str]:
     """
-    Given a place name or address, return a (latitude, longitude) tuple with the coordinates of the given place.
-
-    See https://docs.mapbox.com/api/search/geocoding/ for Mapbox Geocoding API URL formatting requirements.
+    Get coordinates and city name for a given place with proper URL encoding
     """
     try:
-        encoded_place = place_name.replace(' ', '%20')
-        url = f'{MAPBOX_BASE_URL}/{encoded_place}.json?access_token={MAPBOX_TOKEN}&types=poi'
+        # Properly encode the place name for URL
+        query = urllib.parse.quote(place_name)
+        url = f'{MAPBOX_BASE_URL}/{query}.json?access_token={MAPBOX_TOKEN}&types=place,poi'
+        
         data = get_json(url)
         
-        if not data.get('features'):
+        if not data or 'features' not in data or not data['features']:
+            print(f"No location found for: {place_name}")
             return "Error", "Error", "Error"
             
         feature = data['features'][0]
         longitude, latitude = feature['center']
         
+        # Extract city name from context
         city_name = "Unknown"
-        for context in feature.get("context", []):
-            if context.get("id", "").startswith("place."):
-                city_name = context.get("text", "Unknown")
+        context = feature.get("context", [])
+        
+        # First try to get the place name
+        for ctx in context:
+            if ctx.get("id", "").startswith("place."):
+                city_name = ctx.get("text", "Unknown")
                 break
+        
+        # If no city found in context, use the place name itself
+        if city_name == "Unknown" and feature.get("text"):
+            city_name = feature.get("text")
                 
         return str(latitude), str(longitude), city_name
         
@@ -66,19 +85,17 @@ def get_lat_lng(place_name: str) -> tuple[str, str, str]:
 
 def get_weather(city_name: str) -> dict:
     """
-    Get weather information for a given city.
+    Get weather information with proper URL encoding
     """
     try:
-        url = (
-            f"{WEATHER_BASE_URL}?"
-            f"q={city_name},US"
-            f"&appid={WEATHER_API_KEY}"
-            f"&units=imperial"  # Use Fahrenheit
-        )
+        # Properly encode the city name for URL
+        encoded_city = urllib.parse.quote(f"{city_name},US")
+        url = f"{WEATHER_BASE_URL}?q={encoded_city}&appid={WEATHER_API_KEY}&units=imperial"
         
         data = get_json(url)
         
-        if "main" not in data:
+        if not data or "main" not in data:
+            print(f"No weather data found for: {city_name}")
             return {
                 "temp": "N/A",
                 "condition": "N/A",
@@ -94,7 +111,7 @@ def get_weather(city_name: str) -> dict:
             "condition": data["weather"][0]["main"],
             "description": data["weather"][0]["description"].capitalize(),
             "humidity": data["main"]["humidity"],
-            "wind_speed": round(data["wind"]["speed"])
+            "wind_speed": round(data.get("wind", {}).get("speed", 0))
         }
         
     except Exception as e:
@@ -110,21 +127,22 @@ def get_weather(city_name: str) -> dict:
 
 def get_nearest_station(latitude: str, longitude: str) -> tuple[str, bool]:
     """
-    Given latitude and longitude strings, return a (station_name, wheelchair_accessible) tuple for the nearest MBTA station to the given coordinates.
-
-    See https://api-v3.mbta.com/docs/swagger/index.html#/Stop/ApiWeb_StopController_index for URL formatting requirements for the 'GET /stops' API.
+    Get nearest MBTA station with proper parameter handling
     """
     try:
-        url = (
-            f"{MBTA_BASE_URL}?"
-            f"api_key={MBTA_API_KEY}"
-            f"&filter[latitude]={latitude}"
-            f"&filter[longitude]={longitude}"
-            "&sort=distance"
-        )
+        # Ensure parameters are properly formatted
+        params = urllib.parse.urlencode({
+            'api_key': MBTA_API_KEY,
+            'filter[latitude]': latitude,
+            'filter[longitude]': longitude,
+            'sort': 'distance'
+        })
+        
+        url = f"{MBTA_BASE_URL}?{params}"
         data = get_json(url)
         
-        if not data.get('data'):
+        if not data or not data.get('data'):
+            print(f"No station found near coordinates: ({latitude}, {longitude})")
             return "No station found", False
         
         station = data['data'][0]
@@ -143,7 +161,7 @@ def find_stop_near(place_name: str) -> tuple[str, bool]:
 
     This function might use all the functions above.
     """
-    latitude, longitude = get_lat_lng(place_name)
+    latitude, longitude, city_name = get_lat_lng(place_name)
     if latitude == 'Error' or longitude == 'Error':
         return 'Could not find location', False, {}
     
@@ -153,8 +171,12 @@ def find_stop_near(place_name: str) -> tuple[str, bool]:
 
 def display_location_info(place_name: str) -> None:
     """Helper function to display formatted location, transit, and weather information"""
+    # Get current timestamp
+    current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
     print(f"\n{'='*60}")
     print(f"Information for: {place_name}")
+    print(f"Time: {current_time}")
     print(f"{'='*60}")
     
     # Get location info
@@ -183,7 +205,6 @@ def display_location_info(place_name: str) -> None:
         print("Weather information unavailable")
     
     print(f"\n{'='*60}")
-    
 
 
 def main():
