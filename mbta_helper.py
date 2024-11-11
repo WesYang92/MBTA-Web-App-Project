@@ -4,6 +4,9 @@ import urllib.request
 import json
 from datetime import datetime
 import urllib.parse
+from typing import Dict, Any
+import ssl
+import certifi
 
 # Load environment variables
 load_dotenv()
@@ -21,8 +24,6 @@ WEATHER_BASE_URL = "http://api.openweathermap.org/data/2.5/weather"
 def get_json(url: str) -> dict:
     """
     Given a properly formatted URL for a JSON web API request, return a Python JSON object containing the response to that request.
-
-    Both get_lat_lng() and get_nearest_station() might need to use this function.
     """
     try:
         # Create a Request object with proper headers
@@ -31,8 +32,11 @@ def get_json(url: str) -> dict:
             'Accept': 'application/json'
         }
         request = urllib.request.Request(url, headers=headers)
+
+        # Use certifi’s certificate bundle for SSL/TLS connections
+        context = ssl.create_default_context(cafile=certifi.where())
         
-        with urllib.request.urlopen(request) as f:
+        with urllib.request.urlopen(request, context=context) as f:
             response_text = f.read().decode('utf-8')
             return json.loads(response_text)
     except urllib.error.HTTPError as e:
@@ -155,75 +159,104 @@ def get_nearest_station(latitude: str, longitude: str) -> tuple[str, bool]:
         print(f'Error finding nearest station: {e}')
         return 'Error finding station', False
 
-def find_stop_near(place_name: str) -> tuple[str, bool]:
+def find_stop_near(place_name: str) -> Dict[str, Any]:
     """
-    Given a place name or address, return the nearest MBTA stop and whether it is wheelchair accessible.
-
-    This function might use all the functions above.
+    Process a location search request and return all necessary data for template rendering.
+    Handles all business logic including error cases.
+    
+    Args:
+        place_name: Location to search for
+        
+    Returns:
+        Dictionary containing all data needed for template rendering,
+        including error message if applicable
     """
-    latitude, longitude, city_name = get_lat_lng(place_name)
-    if latitude == 'Error' or longitude == 'Error':
-        return 'Could not find location', False, {}
-    
-    station_name, wheelchair_accessible = get_nearest_station(latitude, longitude)
-    weather_info =get_weather(city_name)
-    return station_name, wheelchair_accessible, weather_info
+    try:
+        # Get location coordinates
+        latitude, longitude, city_name = get_lat_lng(place_name)
+        if latitude == 'Error' or longitude == 'Error':
+            return {'error': "Location not found"}
+        
+        # Get nearest station info
+        station_name, wheelchair_accessible = get_nearest_station(latitude, longitude)
+        if station_name == 'Error finding station':
+            return {'error': "No nearby stations found"}
+        # Get weather data
+        weather_info = get_weather(city_name)
+        if weather_info.get("temp") == "Error":
+            return {'error': "Weather data not available"}
 
-def display_location_info(place_name: str) -> None:
-    """Helper function to display formatted location, transit, and weather information"""
-    # Get current timestamp
-    current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        return {
+            'place_name':place_name,
+            'location':{
+                'city':city_name,
+                'lat': latitude,
+                'lon': longitude
+            },
+            'station':{
+                'name':station_name,
+                'wheelchair_accessible': wheelchair_accessible
+            },
+            'weather': weather_info,
+            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        }
+        
+    except Exception as e:
+        print(f"Error in find_stop_near:{str(e)}")
+        return {'error': f"An error occurred: {str(e)}"}
+
+def display_location_info(location_info: dict) -> None:
+    """Helper function to display formatted location, transit, and weather information."""
     
+    if 'error' in location_info:
+        print(f"\nError: {location_info['error']}")
+        return
+
     print(f"\n{'='*60}")
-    print(f"Information for: {place_name}")
-    print(f"Time: {current_time}")
+    print(f"Information for: {location_info['place_name']}")
+    print(f"Time: {location_info['timestamp']}")
     print(f"{'='*60}")
-    
-    # Get location info
-    latitude, longitude, city_name = get_lat_lng(place_name)
+
+    # Display location details
     print(f"\n LOCATION")
-    print(f"City: {city_name}")
-    print(f"Coordinates: ({latitude}, {longitude})")
-    
-    # Get transit and weather info
-    station_name, wheelchair_accessible, weather_info = find_stop_near(place_name)
-    
-    # Display transit information
+    print(f"City: {location_info['location']['city']}")
+    print(f"Coordinates: ({location_info['location']['lat']}, {location_info['location']['lon']})")
+
+    # Display station details
     print(f"\n NEAREST MBTA STATION")
-    print(f"Station: {station_name}")
-    print(f"Wheelchair Accessible: {'✓' if wheelchair_accessible else '✗'}")
-    
-    # Display weather information
-    print(f"\n  WEATHER CONDITIONS")
-    if weather_info.get("temp") != "Error":
-        print(f"Temperature: {weather_info['temp']}°F")
-        print(f"Feels Like: {weather_info['feels_like']}°F")
-        print(f"Condition: {weather_info['description']}")
-        print(f"Humidity: {weather_info['humidity']}%")
-        print(f"Wind Speed: {weather_info['wind_speed']} mph")
-    else:
-        print("Weather information unavailable")
-    
+    print(f"Station: {location_info['station']['name']}")
+    print(f"Wheelchair Accessible: {'✓' if location_info['station']['wheelchair_accessible'] else '✗'}")
+
+    # Display weather details
+    weather_info = location_info['weather']
+    print(f"\n WEATHER CONDITIONS")
+    print(f"Temperature: {weather_info['temp']}°F")
+    print(f"Feels Like: {weather_info['feels_like']}°F")
+    print(f"Condition: {weather_info['description']}")
+    print(f"Humidity: {weather_info['humidity']}%")
+    print(f"Wind Speed: {weather_info['wind_speed']} mph")
+
     print(f"\n{'='*60}")
 
 
 def main():
     """
-    You should test all the above functions here
+    Test all the above functions here.
     """
     test_locations = [
-            "Boston College",
-            "Harvard University",
-            "MIT",
-            "Fenway Park",
-            "Boston Common"
-        ]
-        
+        "Boston College",
+        "Harvard University",
+        "MIT",
+        "Fenway Park",
+        "Boston Common"
+    ]
+    
     print("\nFetching information for various Boston locations...")
     print("Note: This may take a few moments.\n")
-        
+    
     for location in test_locations:
-        display_location_info(location)
+        location_info = find_stop_near(location)
+        display_location_info(location_info)
 
 
 if __name__ == "__main__":
