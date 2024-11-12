@@ -16,3 +16,13 @@ Going forward, I plan to continue using AI tools, but will take a more balanced 
 
 ![alt text](image.png)
 ![alt text](image-2.png)
+
+# Update
+
+UPDATE: There was a url error, I used chatgpt but couldn't fix the problem, I ended up using ssl as well as certifi to fix the issue.
+
+Removed unnecessary variables in app.py.(, get_lat_lng, get_nearest_station, get_weather)
+
+Under the professor's guidance, made sure app.py was as lean as possible, leaving all other import modules to handle the business logic part to mbta_helper.py.
+
+Personal note: It's important to keep the code logic as clear as possible, otherwise you'll end up with unworkable and excessive lines of code layered on top of each other like I did, like a stack of buffs.
